@@ -26,7 +26,9 @@ from rest_framework.decorators import api_view, permission_classes, authenticati
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 import json
-from django.db.models import Q
+from django.db.models import Q, Count
+from django.utils import timezone
+from datetime import timedelta
 from rest_framework.pagination import PageNumberPagination
 from django.utils import timezone
 
@@ -156,15 +158,38 @@ class StudentViewSet(viewsets.ModelViewSet):
                 'detail': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get', 'patch', 'put'])
     def me(self, request):
         """
-        Returns the student profile of the currently authenticated user
+        Returns or updates the student profile of the currently authenticated user
         """
         try:
             student = Student.objects.get(user=request.user)
-            serializer = self.get_serializer(student)
-            return Response(serializer.data)
+
+            if request.method in ['PATCH', 'PUT']:
+                # Update student profile
+                partial = request.method == 'PATCH'
+
+                # Handle user data update
+                user_data = request.data.pop('user', None)
+                if user_data:
+                    user_serializer = UserSerializer(student.user, data=user_data, partial=True)
+                    if user_serializer.is_valid():
+                        user_serializer.save()
+                    else:
+                        return Response(user_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+                # Handle student data update
+                serializer = self.get_serializer(student, data=request.data, partial=partial)
+                if serializer.is_valid():
+                    serializer.save()
+                    return Response(serializer.data)
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                # Return student profile
+                serializer = self.get_serializer(student)
+                return Response(serializer.data)
+
         except Student.DoesNotExist:
             return Response(
                 {'error': 'Student profile not found for this user'},
@@ -753,4 +778,49 @@ class CategoryJoinView(APIView):
                 'category': serializer.data
             })
         except Category.DoesNotExist:
-            return Response({'error': 'Category not found'}, status=404) 
+            return Response({'error': 'Category not found'}, status=404)
+
+
+class DashboardStatsView(APIView):
+    """
+    API endpoint to get dashboard statistics for admin
+    """
+    permission_classes = [AllowAny]  # Change to [IsAdminUser] in production
+
+    def get(self, request):
+        try:
+            # Get current date for recent activities filter
+            now = timezone.now()
+            last_week = now - timedelta(days=7)
+
+            # Calculate statistics
+            total_students = Student.objects.count()
+            active_clubs = Club.objects.count()
+            pending_applications = Application.objects.filter(status='pending').count()
+            recent_activities = Interaction.objects.filter(timestamp__gte=last_week).count()
+
+            # Additional useful stats
+            total_applications = Application.objects.count()
+            approved_applications = Application.objects.filter(status='approved').count()
+            rejected_applications = Application.objects.filter(status='rejected').count()
+            total_categories = Category.objects.count()
+
+            stats = {
+                'totalStudents': total_students,
+                'activeClubs': active_clubs,
+                'pendingApplications': pending_applications,
+                'recentActivities': recent_activities,
+                'totalApplications': total_applications,
+                'approvedApplications': approved_applications,
+                'rejectedApplications': rejected_applications,
+                'totalCategories': total_categories,
+                'lastUpdated': now.isoformat()
+            }
+
+            return Response(stats)
+
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch dashboard statistics: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

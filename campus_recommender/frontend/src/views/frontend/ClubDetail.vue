@@ -1,6 +1,6 @@
 <template>
   <div class="club-detail-page">
-    <!-- 顶部导航 -->
+    <!-- heading navigation -->
     <nav class="navbar">
       <router-link to="/home" class="nav-back">
         <i class="bi bi-arrow-left"></i>
@@ -19,24 +19,13 @@
     </div>
 
     <div v-else>
-      <!-- 社团封面和基本信息 -->
+      <!-- club information -->
       <div class="club-header">
         <!--<img :src="club.image" :alt="club.name" class="club-banner">-->
         <div class="club-info">
           <h1>{{ club.name }}</h1>
           <div class="club-meta">
-            <div class="meta-item">
-              <i class="bi bi-people"></i>
-              <span>{{ club.memberCount }} Members</span>
-            </div>
-            <div class="meta-item">
-              <i class="bi bi-star-fill"></i>
-              <span>{{ club.rating }}/5.0</span>
-            </div>
-            <div class="meta-item">
-              <i class="bi bi-calendar-event"></i>
-              <span>Founded {{ club.foundedDate || 'N/A' }}</span>
-            </div>
+
           </div>
           <p class="club-description">{{ club.description }}</p>
           <div class="club-actions">
@@ -68,7 +57,7 @@
         </div>
       </div>
 
-      <!-- 活动列表 -->
+      <!-- activities -->
       <div class="section">
         <h2>Activities</h2>
         <div v-if="club.activities && club.activities.length > 0" class="activities-list">
@@ -101,7 +90,7 @@
         </div>
       </div>
 
-      <!-- 成员列表 -->
+      <!-- club member -->
       <div class="section">
         <h2>Members</h2>
         <div v-if="club.members && club.members.length > 0" class="members-grid">
@@ -122,11 +111,11 @@
         </div>
       </div>
 
-      <!-- 在成员列表后添加评论区 -->
+      <!-- Add comment section after member list -->
       <!--<div class="section">
         <h2>Comments & Feedback</h2>
         
-        <!-- 评论表单 -->
+        <!-- Comment form -->
         <!--<div class="comment-form">
           <div class="rating-input">
             <span>Your Rating:</span>
@@ -154,7 +143,7 @@
           </button>
         </div>-->
 
-        <!-- 评论列表 -->
+        <!-- Comment list -->
         <!--<div v-if="club.comments && club.comments.length > 0" class="comments-list">
           <div v-for="comment in club.comments" 
                :key="comment.id" 
@@ -225,6 +214,34 @@ const baseUrl = window.location.hostname === 'localhost'
 
 // Fetch club details
 const fetchClubDetails = async () => {
+  console.log('fetchClubDetails called for clubId:', clubId)
+
+  // Check if clubId is valid
+  if (!clubId || clubId === 'undefined' || clubId === 'null') {
+    console.error('Invalid club ID:', clubId)
+    loading.value = false
+    club.value = {
+      id: null,
+      name: 'Invalid Club',
+      description: 'Club ID is missing or invalid. Please go back and try again.',
+      image: '',
+      category: '',
+      memberCount: 0,
+      rating: 0,
+      commentCount: 0,
+      likeCount: 0,
+      foundedDate: '',
+      isApplied: false,
+      isJoined: false,
+      isLiked: false,
+      isFavorited: false,
+      activities: [],
+      comments: [],
+      members: []
+    }
+    return
+  }
+
   loading.value = true
   try {
     const token = localStorage.getItem('token')
@@ -232,68 +249,57 @@ const fetchClubDetails = async () => {
       headers: { 'Authorization': `Token ${token}` }
     }
     
-    // 获取社团详情
+    // Get club details
     const response = await axios.get(`${baseUrl}/api/clubs/${clubId}/`, config)
     const clubData = response.data
     
-    // 记录浏览交互
+    // Record view interaction - simplified to avoid multiple calls
     try {
-      // 首先尝试使用专用端点
+      console.log('Recording view interaction for club:', clubId)
       await axios.post(`${baseUrl}/api/interactions/record-view/`, {
-        club: clubId
+        club: clubId  // Backend expects 'club', not 'club_id'
       }, config);
-      console.log('View interaction recorded successfully using dedicated endpoint');
-    } catch (dedicatedEndpointError) {
-      console.warn('Dedicated endpoint failed, falling back to standard method:', dedicatedEndpointError);
-      
-      try {
-        // 回退到标准方法：检查是否存在，然后更新或创建
-        const interactionsResponse = await axios.get(`${baseUrl}/api/interactions/`, config);
-        const existingViewInteraction = interactionsResponse.data.find(
-          interaction => interaction.club === parseInt(clubId) && interaction.interaction_type === 'view'
-        );
-        
-        if (existingViewInteraction) {
-          // 如果存在，更新它
-          await axios.put(`${baseUrl}/api/interactions/${existingViewInteraction.id}/`, {
-            club: clubId,
-            interaction_type: 'view'
-          }, config);
-          console.log('Updated existing view interaction');
-        } else {
-          // 如果不存在，创建新的
-          await axios.post(`${baseUrl}/api/interactions/`, {
-            club: clubId,
-            interaction_type: 'view'
-          }, config);
-          console.log('Created new view interaction');
-        }
-      } catch (standardMethodError) {
-        console.error('All methods to record view interaction failed:', standardMethodError);
+      console.log('View interaction recorded successfully')
+    } catch (recordViewError) {
+      console.error('Error recording view interaction:', recordViewError)
+      if (recordViewError.response) {
+        console.error('Error status:', recordViewError.response.status)
+        console.error('Error data:', recordViewError.response.data)
       }
+      // Don't use fallback to avoid duplicate database operations
     }
     
-    // 检查是否收藏过此社团
+    // Check if favorited this club
     let isFavorited = false
     try {
+      console.log('Checking if club is favorited...')
       const savedClubsResponse = await axios.get(`${baseUrl}/api/saved-clubs/`, config)
-      const savedClubs = savedClubsResponse.data
-      isFavorited = savedClubs.some(savedClub => savedClub.club === parseInt(clubId))
+      console.log('Saved clubs response:', savedClubsResponse.data)
+
+      // Handle both array and paginated response formats
+      const savedClubsData = savedClubsResponse.data.results || savedClubsResponse.data
+      isFavorited = Array.isArray(savedClubsData) && savedClubsData.some(savedClub => savedClub.club === parseInt(clubId))
+      console.log('Is club favorited:', isFavorited)
     } catch (savedError) {
       console.error('Error checking saved clubs:', savedError)
-      // 回退到localStorage
+      if (savedError.response) {
+        console.error('Saved clubs error status:', savedError.response.status)
+        console.error('Saved clubs error data:', savedError.response.data)
+      }
+      // Fall back to localStorage
       const favoritedClubIds = JSON.parse(localStorage.getItem('favoritedClubs') || '[]')
       isFavorited = favoritedClubIds.includes(Number(clubId))
+      console.log('Using localStorage fallback, is favorited:', isFavorited)
     }
     
-    // 获取应用状态
+    // Get application status
     const appliedClubIds = JSON.parse(localStorage.getItem('appliedClubs') || '[]')
     
-    // 合并所有数据
+    // Merge all data
     club.value = {
       ...clubData,
       isJoined: appliedClubIds.includes(Number(clubId)),
-      isLiked: false, // 待实现
+      isLiked: false, // To be implemented
       isFavorited: isFavorited,
       activities: clubData.activities || [],
       comments: clubData.comments || [],
@@ -330,17 +336,17 @@ const handleFavorite = async () => {
       headers: { 'Authorization': `Token ${token}` }
     }
     
-    // 暂时更新UI状态，给用户即时反馈
+    // Temporarily update UI status, provide immediate feedback
     club.value.isFavorited = !club.value.isFavorited
     
     if (club.value.isFavorited) {
-      // 添加到收藏
+      // Add to favorites
       await axios.post(`${baseUrl}/api/saved-clubs/`, {
         club: club.value.id
       }, config)
       console.log('Club added to favorites')
     } else {
-      // 从收藏中移除（需要先获取保存的ID）
+      // Remove from favorites (need to get saved ID first)
       const savedClubsResponse = await axios.get(`${baseUrl}/api/saved-clubs/`, config)
       const savedClub = savedClubsResponse.data.find(item => item.club === club.value.id)
       
@@ -350,7 +356,7 @@ const handleFavorite = async () => {
       }
     }
     
-    // 同时更新localStorage，作为备份和提高UI响应速度
+    // Simultaneously update localStorage, as backup and to improve UI response speed
     const favoritedClubIds = JSON.parse(localStorage.getItem('favoritedClubs') || '[]')
     if (club.value.isFavorited) {
       if (!favoritedClubIds.includes(Number(clubId))) {
@@ -365,7 +371,7 @@ const handleFavorite = async () => {
     localStorage.setItem('favoritedClubs', JSON.stringify(favoritedClubIds))
     
   } catch (error) {
-    // 如果API调用失败，恢复UI状态
+    // If API call fails, restore UI status
     club.value.isFavorited = !club.value.isFavorited
     console.error('Error updating favorite status:', error)
     alert('Failed to update favorite status')

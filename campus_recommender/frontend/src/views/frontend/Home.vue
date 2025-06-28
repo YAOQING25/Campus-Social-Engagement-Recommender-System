@@ -1,6 +1,6 @@
 <template>
   <div class="home-container">
-    <!-- 导航栏 -->
+    <!-- Navigation -->
     <nav class="navbar">
       <div class="nav-left">
         <i class="bi bi-boxes"></i>
@@ -40,7 +40,7 @@
       <span>{{ applicationStatus === 'success' ? 'Application submitted successfully! Please wait for admin approval.' : 'Failed to submit application. Please try again.' }}</span>
     </div>
 
-    <!-- 搜索区域 -->
+    <!-- search section -->
     <div class="search-section">
       <div class="search-wrapper">
         <i class="bi bi-search"></i>
@@ -60,7 +60,7 @@
       </div>
     </div>
 
-    <!-- 俱乐部列表 -->
+    <!-- Club List -->
     <div class="clubs-grid">
       <div v-for="club in filteredClubs" 
            :key="club.id" 
@@ -92,13 +92,14 @@
             </div>-->
           </div>
           <div class="card-actions" @click.stop>
-            <button 
+            <button
               class="join-btn"
-              :class="{ 'joined': club.isJoined }"
+              :class="{ 'joined': club.isJoined, 'applied': club.isApplied }"
               @click="toggleJoin(club)"
+              :disabled="club.isApplied || club.isJoined"
             >
-              <i :class="club.isJoined ? 'bi bi-check2' : 'bi bi-plus'"></i>
-              {{ club.isJoined ? 'Applied' : 'Join Club' }}
+              <i :class="club.isJoined ? 'bi bi-check2' : club.isApplied ? 'bi bi-clock' : 'bi bi-plus'"></i>
+              {{ club.isJoined ? 'Joined' : club.isApplied ? 'Applied' : 'Join Club' }}
             </button>
             <div class="action-icons">
               <button 
@@ -160,19 +161,97 @@ const fetchClubs = async () => {
   try {
     const response = await axios.get(`${baseUrl}/api/clubs/`)
     const clubsData = response.data.results || response.data
-    
-    // Get favorited club IDs from localStorage
-    const favoritedClubIds = JSON.parse(localStorage.getItem('favoritedClubs') || '[]')
-    
-    // Get user's applied/joined clubs
-    const appliedClubIds = JSON.parse(localStorage.getItem('appliedClubs') || '[]')
-    
-    clubs.value = clubsData.map(club => ({
-      ...club,
-      isJoined: appliedClubIds.includes(club.id),
-      isLiked: false,
-      isFavorited: favoritedClubIds.includes(club.id)
-    }))
+
+    // Get favorited club IDs from API (with fallback to localStorage)
+    let favoritedClubIds = []
+    const token = localStorage.getItem('token')
+
+    if (token) {
+      try {
+        const config = {
+          headers: { 'Authorization': `Token ${token}` }
+        }
+        const savedClubsResponse = await axios.get(`${baseUrl}/api/saved-clubs/`, config)
+        const savedClubsData = savedClubsResponse.data.results || savedClubsResponse.data
+        favoritedClubIds = savedClubsData.map(savedClub => savedClub.club)
+        console.log('Loaded favorite clubs from API:', favoritedClubIds)
+
+        // Update localStorage with API data
+        localStorage.setItem('favoritedClubs', JSON.stringify(favoritedClubIds))
+      } catch (savedError) {
+        console.error('Error fetching saved clubs:', savedError)
+        // Fallback to localStorage
+        favoritedClubIds = JSON.parse(localStorage.getItem('favoritedClubs') || '[]')
+        console.log('Using localStorage fallback for favorites:', favoritedClubIds)
+      }
+    } else {
+      // No token, use localStorage only
+      favoritedClubIds = JSON.parse(localStorage.getItem('favoritedClubs') || '[]')
+    }
+
+    // Get application statuses from API if user is authenticated
+    let applicationStatuses = {}
+    let appliedClubIds = []
+
+    if (token) {
+      try {
+        const config = {
+          headers: { 'Authorization': `Token ${token}` }
+        }
+        const applicationsResponse = await axios.get(`${baseUrl}/api/applications/`, config)
+        const applications = applicationsResponse.data.results || applicationsResponse.data
+
+        // Create a map of club_id -> application_status
+        applications.forEach(app => {
+          applicationStatuses[app.club] = app.status
+        })
+        console.log('Application statuses from API:', applicationStatuses)
+
+        // Only use localStorage as fallback for UI state, not as source of truth
+        appliedClubIds = JSON.parse(localStorage.getItem('appliedClubs') || '[]')
+      } catch (error) {
+        console.warn('Could not fetch application statuses:', error)
+        // If API fails and user is authenticated, still try localStorage as fallback
+        appliedClubIds = JSON.parse(localStorage.getItem('appliedClubs') || '[]')
+      }
+    } else {
+      // For unauthenticated users, don't show any applied status
+      console.log('User not authenticated, showing clean state')
+      appliedClubIds = []
+    }
+
+    clubs.value = clubsData.map(club => {
+      // Determine application status - prioritize API data over localStorage
+      const applicationStatus = applicationStatuses[club.id]
+      const hasAppliedLocally = appliedClubIds.includes(club.id)
+
+      let isApplied = false
+      let isJoined = false
+
+      // Only use API data if user is authenticated
+      if (token && applicationStatus) {
+        if (applicationStatus === 'approved') {
+          isJoined = true
+        } else if (applicationStatus === 'pending') {
+          isApplied = true
+        }
+      } else if (token && hasAppliedLocally) {
+        // Only use localStorage if authenticated and no API data
+        isApplied = true
+      }
+      // For unauthenticated users, both remain false
+
+      return {
+        ...club,
+        isApplied: isApplied,
+        isJoined: isJoined,
+        isLiked: false,
+        isFavorited: favoritedClubIds.includes(club.id),
+        applicationStatus: applicationStatus
+      }
+    })
+
+    console.log('Clubs loaded with favorite status:', clubs.value.filter(c => c.isFavorited).map(c => c.name))
   } catch (error) {
     console.error('Error fetching clubs:', error)
     alert('Failed to fetch clubs')
@@ -206,8 +285,8 @@ const filteredClubs = computed(() => {
 })
 
 const toggleJoin = async (club) => {
-  if (club.isJoined) {
-    // If already joined, do nothing or implement leave club functionality
+  if (club.isJoined || club.isApplied) {
+    // If already joined or applied, do nothing
     return
   }
   
@@ -258,8 +337,9 @@ const toggleJoin = async (club) => {
       }
     }
     
-    // Update UI
-    club.isJoined = true
+    // Update UI - set to applied status (pending approval)
+    club.isApplied = true
+    club.isJoined = false
     
     // Store in localStorage that user has applied to this club
     const appliedClubs = JSON.parse(localStorage.getItem('appliedClubs') || '[]')
@@ -298,27 +378,94 @@ const toggleLike = (club) => {
   club.isLiked = !club.isLiked
 }
 
-const toggleFavorite = (club) => {
-  club.isFavorited = !club.isFavorited
-  
-  // Get current favorited club IDs from localStorage
-  const favoritedClubIds = JSON.parse(localStorage.getItem('favoritedClubs') || '[]')
-  
-  if (club.isFavorited) {
-    // Add to favorites if not already included
-    if (!favoritedClubIds.includes(club.id)) {
-      favoritedClubIds.push(club.id)
+const toggleFavorite = async (club) => {
+  try {
+    const token = localStorage.getItem('token')
+    if (!token) {
+      alert('Please login to save clubs')
+      return
     }
-  } else {
-    // Remove from favorites
-    const index = favoritedClubIds.indexOf(club.id)
-    if (index > -1) {
-      favoritedClubIds.splice(index, 1)
+
+    const config = {
+      headers: {
+        'Authorization': `Token ${token}`,
+        'Content-Type': 'application/json'
+      }
+    }
+
+    console.log('Toggling favorite for club:', club.id, 'Current status:', club.isFavorited)
+
+    // Store original state for rollback
+    const originalState = club.isFavorited
+
+    // Temporarily update UI for immediate feedback
+    club.isFavorited = !club.isFavorited
+
+    if (club.isFavorited) {
+      // Add to favorites
+      console.log('Adding club to favorites...')
+      const response = await axios.post(`${baseUrl}/api/saved-clubs/`, {
+        club: club.id
+      }, config)
+      console.log('Club added to favorites successfully:', response.data)
+    } else {
+      // Remove from favorites (need to get saved ID first)
+      console.log('Removing club from favorites...')
+      const savedClubsResponse = await axios.get(`${baseUrl}/api/saved-clubs/`, config)
+      console.log('Saved clubs response for removal:', savedClubsResponse.data)
+
+      // Handle both array and paginated response formats
+      const savedClubsData = savedClubsResponse.data.results || savedClubsResponse.data
+      const savedClub = savedClubsData.find(item => item.club === club.id)
+
+      if (savedClub) {
+        await axios.delete(`${baseUrl}/api/saved-clubs/${savedClub.id}/`, config)
+        console.log('Club removed from favorites successfully')
+      } else {
+        console.warn('Saved club not found in API response')
+      }
+    }
+
+    // Update localStorage as backup
+    const favoritedClubIds = JSON.parse(localStorage.getItem('favoritedClubs') || '[]')
+    if (club.isFavorited) {
+      if (!favoritedClubIds.includes(club.id)) {
+        favoritedClubIds.push(club.id)
+      }
+    } else {
+      const index = favoritedClubIds.indexOf(club.id)
+      if (index > -1) {
+        favoritedClubIds.splice(index, 1)
+      }
+    }
+    localStorage.setItem('favoritedClubs', JSON.stringify(favoritedClubIds))
+
+    // Show success message
+    const message = club.isFavorited ? 'Club saved to favorites!' : 'Club removed from favorites!'
+    console.log(message)
+
+  } catch (error) {
+    // If API call fails, restore UI status
+    club.isFavorited = !club.isFavorited
+    console.error('Error updating favorite status:', error)
+
+    // More detailed error handling
+    if (error.response) {
+      console.error('Error response:', error.response.data)
+      console.error('Error status:', error.response.status)
+
+      if (error.response.status === 401) {
+        alert('Session expired. Please login again.')
+        router.push('/login')
+      } else if (error.response.status === 400) {
+        alert('Invalid request. Please try again.')
+      } else {
+        alert(`Failed to update favorite status: ${error.response.data.detail || error.response.data.error || 'Unknown error'}`)
+      }
+    } else {
+      alert('Network error. Please check your connection and try again.')
     }
   }
-  
-  // Save updated favorites to localStorage
-  localStorage.setItem('favoritedClubs', JSON.stringify(favoritedClubIds))
 }
 
 const goToDetail = (clubId) => {
@@ -378,7 +525,7 @@ const goToDetail = (clubId) => {
   }
 }
 
-/* 导航栏样式 */
+/* Navigation bar style */
 .navbar {
   background: white;
   padding: 1rem 2rem;
@@ -432,7 +579,7 @@ const goToDetail = (clubId) => {
   background: #eef2ff;
 }
 
-/* 搜索区域样式 */
+/* Search section style */
 .search-section {
   width: 100%;
   padding: 2rem;
@@ -477,7 +624,7 @@ const goToDetail = (clubId) => {
   box-shadow: 0 2px 4px rgba(0,0,0,0.04);
 }
 
-/* 俱乐部卡片网格 */
+/* Club card grid */
 .clubs-grid {
   width: 100%;
   padding: 0 2rem 2rem;
@@ -624,8 +771,19 @@ const goToDetail = (clubId) => {
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
 }
 
+.join-btn.applied {
+  background: linear-gradient(45deg, #f59e0b, #fbbf24);
+  cursor: not-allowed;
+}
+
 .join-btn.joined {
   background: linear-gradient(45deg, #059669, #10b981);
+  cursor: not-allowed;
+}
+
+.join-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 .action-icons {

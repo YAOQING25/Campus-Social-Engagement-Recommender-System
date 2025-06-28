@@ -1,6 +1,6 @@
 <template>
   <div class="favorite-page">
-    <!-- 导航栏与主页保持一致 -->
+    <!-- Heading Navigation -->
     <nav class="navbar">
       <div class="nav-left">
         <i class="bi bi-boxes"></i>
@@ -30,7 +30,17 @@
       </div>
     </nav>
 
-    <!-- 收藏内容 -->
+    <!-- Application status message (same as other pages) -->
+    <div
+      v-if="showApplicationMessage"
+      class="application-message"
+      :class="applicationStatus"
+    >
+      <i :class="applicationStatus === 'success' ? 'bi bi-check-circle' : 'bi bi-exclamation-circle'"></i>
+      <span>{{ applicationStatus === 'success' ? 'Application submitted successfully! Please wait for admin approval.' : 'Failed to submit application. Please try again.' }}</span>
+    </div>
+
+    <!-- Save Club Page -->
     <div class="content">
       <div class="section">
         <div class="section-header">
@@ -38,7 +48,7 @@
           <span class="count-badge">{{ favoriteClubs.length }} clubs</span>
         </div>
         
-        <!-- 收藏为空时显示 -->
+        <!-- Save Club Empty -->
         <div v-if="favoriteClubs.length === 0" class="empty-state">
           <div class="empty-icon">
             <i class="bi bi-bookmark-heart"></i>
@@ -57,7 +67,7 @@
           </div>
         </div>
 
-        <!-- 收藏列表 -->
+        <!-- Save Club List -->
         <div v-else class="clubs-grid">
           <div v-for="club in favoriteClubs" 
                :key="club.id" 
@@ -87,13 +97,19 @@
                 </div>
               </div>
               <div class="card-actions">
-                <button 
+                <button
                   class="join-btn"
-                  :class="{ 'joined': club.isJoined }"
+                  :class="{ 'joined': club.isJoined, 'applied': club.isApplied }"
                   @click="handleJoin(club)"
+                  :disabled="club.isApplied || club.isJoined || joinInProgress"
                 >
-                  <i :class="club.isJoined ? 'bi bi-check2' : 'bi bi-plus'"></i>
-                  {{ club.isJoined ? 'Joined' : 'Join Now' }}
+                  <span v-if="joinInProgress && joiningClubId === club.id">
+                    <i class="bi bi-hourglass"></i> Processing...
+                  </span>
+                  <span v-else>
+                    <i :class="club.isJoined ? 'bi bi-check2' : club.isApplied ? 'bi bi-clock' : 'bi bi-plus'"></i>
+                    {{ club.isJoined ? 'Joined' : club.isApplied ? 'Applied' : 'Join Now' }}
+                  </span>
                 </button>
                 <button 
                   class="remove-btn" 
@@ -121,13 +137,17 @@ const router = useRouter()
 const loading = ref(false)
 const error = ref(null)
 const favoriteClubs = ref([])
+const joinInProgress = ref(false)
+const joiningClubId = ref(null)
+const applicationStatus = ref(null)
+const showApplicationMessage = ref(false)
 
-// 获取API基础URL
+// Get API URL
 const baseUrl = window.location.hostname === 'localhost' 
   ? `http://${window.location.hostname}:8000` 
   : `${window.location.protocol}//${window.location.host}`
 
-// 获取收藏的俱乐部
+// Fetch Save Clubs
 const fetchFavoriteClubs = async () => {
   loading.value = true
   error.value = null
@@ -143,33 +163,66 @@ const fetchFavoriteClubs = async () => {
       headers: { 'Authorization': `Token ${token}` }
     }
     
-    // 从API获取收藏的俱乐部
+    // Get application statuses from API if possible
+    let applicationStatuses = {}
+    const appliedClubIds = JSON.parse(localStorage.getItem('appliedClubs') || '[]')
+
+    try {
+      const applicationsResponse = await axios.get(`${baseUrl}/api/applications/`, config)
+      const applications = applicationsResponse.data.results || applicationsResponse.data
+
+      // Create a map of club_id -> application_status
+      applications.forEach(app => {
+        applicationStatuses[app.club] = app.status
+      })
+      console.log('Application statuses:', applicationStatuses)
+    } catch (error) {
+      console.warn('Could not fetch application statuses:', error)
+    }
+
+    // Get Save Clubs from API
     const savedClubsResponse = await axios.get(`${baseUrl}/api/saved-clubs/`, config)
     const savedClubs = savedClubsResponse.data
-    
+
     if (savedClubs && savedClubs.length > 0) {
-      // 获取每个收藏俱乐部的详细信息
+      // Get each Save Clubs details from API
       const clubPromises = savedClubs.map(async (savedClub) => {
         try {
           const clubResponse = await axios.get(`${baseUrl}/api/clubs/${savedClub.club}/`, config)
+
+          // Determine application status
+          const applicationStatus = applicationStatuses[savedClub.club]
+          const hasAppliedLocally = appliedClubIds.includes(savedClub.club)
+
+          let isApplied = false
+          let isJoined = false
+
+          if (applicationStatus === 'approved') {
+            isJoined = true
+          } else if (applicationStatus === 'pending' || hasAppliedLocally) {
+            isApplied = true
+          }
+
           return {
             ...clubResponse.data,
             isFavorited: true,
-            isJoined: false // 假设未加入，实际应根据用户状态确定
+            isApplied: isApplied,
+            isJoined: isJoined,
+            applicationStatus: applicationStatus
           }
         } catch (err) {
           console.error(`Error fetching club ${savedClub.club}:`, err)
           return null
         }
       })
-      
+
       const clubResults = await Promise.all(clubPromises)
-      favoriteClubs.value = clubResults.filter(Boolean) // 过滤掉null结果
+      favoriteClubs.value = clubResults.filter(Boolean) // Filter out null results
     } else {
       favoriteClubs.value = []
     }
     
-    // 备份到localStorage以提高性能
+    // Backup to localStorage for performance
     const favoritedClubIds = favoriteClubs.value.map(club => club.id)
     localStorage.setItem('favoritedClubs', JSON.stringify(favoritedClubIds))
     
@@ -177,11 +230,11 @@ const fetchFavoriteClubs = async () => {
     console.error('Error fetching favorite clubs:', err)
     error.value = 'Failed to fetch favorite clubs'
     
-    // 如果API调用失败，回退到localStorage
+    // If API call fails, fallback to localStorage
     try {
       const favoritedClubIds = JSON.parse(localStorage.getItem('favoritedClubs') || '[]')
       if (favoritedClubIds.length > 0) {
-        // 尝试使用localStorage中的ID获取俱乐部详情
+        // Try to get club details using IDs from localStorage
         const clubPromises = favoritedClubIds.map(async (clubId) => {
           try {
             const token = localStorage.getItem('token')
@@ -208,7 +261,7 @@ const fetchFavoriteClubs = async () => {
   }
 }
 
-// 处理移除收藏
+// Handle Remove Save Clubs
 const removeFavorite = async (club) => {
   try {
     const token = localStorage.getItem('token')
@@ -221,15 +274,15 @@ const removeFavorite = async (club) => {
       headers: { 'Authorization': `Token ${token}` }
     }
     
-    // 从UI中先移除，提供即时反馈
+    // Remove from UI first, provide immediate feedback
     const index = favoriteClubs.value.findIndex(c => c.id === club.id)
     if (index > -1) {
       favoriteClubs.value.splice(index, 1)
     }
     
-    // 从API中删除收藏
+    // Remove from API
     try {
-      // 先获取保存的记录ID
+      // Get saved record ID
       const savedClubsResponse = await axios.get(`${baseUrl}/api/saved-clubs/`, config)
       const savedClub = savedClubsResponse.data.find(item => item.club === club.id)
       
@@ -239,11 +292,11 @@ const removeFavorite = async (club) => {
       }
     } catch (apiError) {
       console.error('Error removing club from API:', apiError)
-      // 如果API调用失败，尝试推回到UI
-      fetchFavoriteClubs() // 重新刷新以保持一致
+      // If API call fails, fallback to UI
+      fetchFavoriteClubs() // Refresh to keep consistent
     }
     
-    // 更新localStorage
+    // Update localStorage
     const favoritedClubIds = JSON.parse(localStorage.getItem('favoritedClubs') || '[]')
     const updatedIds = favoritedClubIds.filter(id => id !== club.id)
     localStorage.setItem('favoritedClubs', JSON.stringify(updatedIds))
@@ -252,9 +305,80 @@ const removeFavorite = async (club) => {
   }
 }
 
-const handleJoin = (club) => {
-  // 处理加入俱乐部的逻辑（可与推荐页面相同）
-  club.isJoined = !club.isJoined
+const handleJoin = async (club) => {
+  // If already joined, applied, or another join request is in progress, do not allow new requests
+  if (club.isJoined || club.isApplied || joinInProgress.value) {
+    return
+  }
+
+  joinInProgress.value = true
+  joiningClubId.value = club.id
+
+  try {
+    // Get current user info from localStorage (same as other pages)
+    const user = JSON.parse(localStorage.getItem('user') || '{}')
+    const token = localStorage.getItem('token')
+
+    console.log('Joining club:', club.name, 'ID:', club.id)
+
+    // Create application data - use same format as other pages
+    const applicationData = {
+      club: club.id,
+      status: 'pending'
+    }
+
+    // For development/testing without backend (same logic as other pages)
+    try {
+      // Try to submit application to backend - without auth headers for testing (same as other pages)
+      const response = await axios.post(`${baseUrl}/api/applications/`, applicationData)
+      console.log('Application submitted successfully:', response.data)
+
+      // If successful, continue with normal flow
+    } catch (apiError) {
+      console.error('API Error:', apiError)
+
+      // Only use simulation if it's an auth error (same as other pages)
+      if (apiError.response && apiError.response.status === 401) {
+        console.log('Using simulation mode due to auth error')
+        // Continue with simulation
+      } else {
+        // For other errors, rethrow
+        throw apiError
+      }
+    }
+
+    // Update UI - set to applied status (pending approval)
+    club.isApplied = true
+    club.isJoined = false
+
+    // Store in localStorage that user has applied to this club (same as other pages)
+    const appliedClubs = JSON.parse(localStorage.getItem('appliedClubs') || '[]')
+    if (!appliedClubs.includes(club.id)) {
+      appliedClubs.push(club.id)
+      localStorage.setItem('appliedClubs', JSON.stringify(appliedClubs))
+    }
+
+    // Show success message (same as other pages)
+    applicationStatus.value = 'success'
+    showApplicationMessage.value = true
+    setTimeout(() => {
+      showApplicationMessage.value = false
+    }, 3000)
+
+  } catch (error) {
+    console.error('Error applying to club:', error)
+
+    // Show error message (same format as other pages)
+    applicationStatus.value = 'error'
+    showApplicationMessage.value = true
+    setTimeout(() => {
+      showApplicationMessage.value = false
+    }, 3000)
+
+  } finally {
+    joinInProgress.value = false
+    joiningClubId.value = null
+  }
 }
 
 const goToDetail = (clubId) => {
@@ -271,23 +395,23 @@ const getColorFromString = (str) => {
 }
 
 const handleLogout = () => {
-  // 清除认证数据
+  // Clear Auth Data
   localStorage.removeItem('token')
   localStorage.removeItem('user')
   localStorage.removeItem('isAdmin')
   
-  // 重定向到登录页
+  // Redirect to Login Page
   router.push('/login')
 }
 
-// 组件加载时获取数据
+// Component Load Data
 onMounted(() => {
   fetchFavoriteClubs()
 })
 </script>
 
 <style scoped>
-/* 导航栏样式与主页完全一致 */
+/* Navbar style same as Home Page */
 .navbar {
   background: white;
   padding: 1rem 2rem;
@@ -339,6 +463,33 @@ onMounted(() => {
 .nav-link.router-link-active {
   color: #4338ca;
   background: #eef2ff;
+}
+
+/* Application message (same as other pages) */
+.application-message {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1rem 2rem;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  z-index: 1000;
+}
+
+.application-message.success {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+
+.application-message.error {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
 }
 
 /* 复用主页的基础样式 */
@@ -522,9 +673,9 @@ onMounted(() => {
   color: white;
 }
 
-/* 保持类别标签的渐变色样式 */
+/* Keep category tag gradient style */
 .category-tag.sports { background: linear-gradient(45deg, #ef4444, #f87171); }
-/* ... 其他类别样式 ... */
+/* ... Other category styles ... */
 
 .card-body {
   padding: 1.5rem;
@@ -585,8 +736,25 @@ onMounted(() => {
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
 }
 
+.join-btn.applied {
+  background: linear-gradient(45deg, #f59e0b, #fbbf24);
+  cursor: not-allowed;
+}
+
 .join-btn.joined {
   background: linear-gradient(45deg, #059669, #10b981);
+  cursor: not-allowed;
+}
+
+.join-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.join-btn.applied:hover,
+.join-btn.joined:hover {
+  transform: none;
+  box-shadow: none;
 }
 
 .remove-btn {

@@ -85,9 +85,10 @@
                   >
                     <i class="bi bi-x-lg"></i>
                   </button>
-                  <button 
+                  <button
                     class="icon-btn view"
                     title="View Details"
+                    @click="viewApplication(app)"
                   >
                     <i class="bi bi-eye"></i>
                   </button>
@@ -123,6 +124,77 @@
       </div>
     </div>
   </div>
+
+  <!-- Application Details Modal -->
+  <div v-if="showModal" class="modal-overlay" @click="closeModal">
+    <div class="modal-content" @click.stop>
+      <div class="modal-header">
+        <h3>Application Details</h3>
+        <button class="close-btn" @click="closeModal">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+
+      <div class="modal-body" v-if="selectedApplication">
+        <div class="detail-grid">
+          <div class="detail-item">
+            <label>Student Name:</label>
+            <span>{{ selectedApplication.studentName }}</span>
+          </div>
+
+          <div class="detail-item">
+            <label>Student ID:</label>
+            <span>{{ selectedApplication.studentId }}</span>
+          </div>
+
+          <div class="detail-item">
+            <label>Club:</label>
+            <span>{{ selectedApplication.club }}</span>
+          </div>
+
+          <div class="detail-item">
+            <label>Apply Date:</label>
+            <span>{{ selectedApplication.applyDate }}</span>
+          </div>
+
+          <div class="detail-item">
+            <label>Status:</label>
+            <span class="status-badge" :class="selectedApplication.status">
+              {{ selectedApplication.status }}
+            </span>
+          </div>
+
+          <div class="detail-item" v-if="selectedApplication.originalApp?.reason">
+            <label>Application Reason:</label>
+            <span>{{ selectedApplication.originalApp.reason }}</span>
+          </div>
+
+          <div class="detail-item" v-if="selectedApplication.originalApp?.notes">
+            <label>Admin Notes:</label>
+            <span>{{ selectedApplication.originalApp.notes }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn secondary" @click="closeModal">Close</button>
+        <div class="action-buttons" v-if="selectedApplication && selectedApplication.status === 'pending'">
+          <button
+            class="btn success"
+            @click="approveApplication(selectedApplication); closeModal()"
+          >
+            Approve
+          </button>
+          <button
+            class="btn danger"
+            @click="rejectApplication(selectedApplication); closeModal()"
+          >
+            Reject
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>
 
 <script setup>
@@ -145,6 +217,10 @@ const itemsPerPage = 10
 const selectAll = ref(false)
 const loading = ref(false)
 
+// Modal state
+const showModal = ref(false)
+const selectedApplication = ref(null)
+
 // Fetch applications from backend
 const fetchApplications = async () => {
   loading.value = true
@@ -159,14 +235,94 @@ const fetchApplications = async () => {
     }*/
     
     try {
-      // For testing, don't use auth
-      const response = await axios.get(`${baseUrl}/api/applications/`)
-      
+      // Use proper authentication for admin access
+      const token = localStorage.getItem('token') || localStorage.getItem('adminToken')
+      const config = token ? {
+        headers: { 'Authorization': `Token ${token}` }
+      } : {}
+
+      const response = await axios.get(`${baseUrl}/api/applications/`, config)
+
       const applicationsData = response.data.results || response.data
-      applications.value = applicationsData.map(app => ({
-        ...app,
-        selected: false
+
+      // Process applications to get student names and club names
+      const processedApplications = await Promise.all(applicationsData.map(async (app) => {
+        let studentName = 'Unknown Student'
+        let clubName = 'Unknown Club'
+        let studentId = app.student || 'N/A'
+
+        try {
+          // Try to fetch student details
+          if (app.student) {
+            try {
+              const studentResponse = await axios.get(`${baseUrl}/api/students/${app.student}/`, config)
+              if (studentResponse.data) {
+                studentName = studentResponse.data.user?.username || studentResponse.data.name || 'Unknown Student'
+                studentId = studentResponse.data.student_id || app.student
+              }
+            } catch (studentError) {
+              console.warn(`Could not fetch student ${app.student}:`, studentError)
+              // Use fallback
+              studentName = `Student ${app.student}`
+            }
+          }
+
+          // Try to fetch club details
+          if (app.club) {
+            try {
+              const clubResponse = await axios.get(`${baseUrl}/api/clubs/${app.club}/`, config)
+              if (clubResponse.data) {
+                clubName = clubResponse.data.name || 'Unknown Club'
+              }
+            } catch (clubError) {
+              console.warn(`Could not fetch club ${app.club}:`, clubError)
+              // Use fallback
+              clubName = `Club ${app.club}`
+            }
+          }
+        } catch (error) {
+          console.warn('Error processing application:', error)
+        }
+
+        // Process apply date - the API should return 'applyDate' field from ApplicationSerializer
+        let applyDate = 'N/A'
+
+        // Try to get the date from the API response
+        const dateValue = app.applyDate || app.apply_date || app.created_at || app.date_applied
+
+        if (dateValue && dateValue !== null && dateValue !== '') {
+          try {
+            // Parse the date and format it for display
+            const date = new Date(dateValue)
+            if (!isNaN(date.getTime())) {
+              applyDate = date.toLocaleDateString()
+            } else {
+              // If parsing fails, use the raw value
+              applyDate = dateValue.toString()
+            }
+          } catch (error) {
+            console.warn('Error parsing apply date:', dateValue, error)
+            applyDate = dateValue.toString() || 'Invalid Date'
+          }
+        } else {
+          // If no date found, use today's date as a reasonable fallback
+          // This handles cases where old applications might not have dates
+          applyDate = new Date().toLocaleDateString()
+        }
+
+        return {
+          id: app.id,
+          studentName: studentName,
+          studentId: studentId,
+          club: clubName,
+          applyDate: applyDate,
+          status: app.status || 'pending',
+          selected: false,
+          originalApp: app // Keep original data for reference
+        }
       }))
+
+      applications.value = processedApplications
     } catch (apiError) {
       console.error('API Error:', apiError)
       
@@ -299,6 +455,31 @@ const rejectApplication = async (app) => {
     } else {
       alert('Failed to reject application')
     }
+  }
+}
+
+// Handle view application details
+const viewApplication = (app) => {
+  selectedApplication.value = app
+  showModal.value = true
+
+  // Add escape key listener
+  document.addEventListener('keydown', handleEscapeKey)
+}
+
+// Close modal
+const closeModal = () => {
+  showModal.value = false
+  selectedApplication.value = null
+
+  // Remove escape key listener
+  document.removeEventListener('keydown', handleEscapeKey)
+}
+
+// Handle escape key press
+const handleEscapeKey = (event) => {
+  if (event.key === 'Escape') {
+    closeModal()
   }
 }
 
@@ -490,6 +671,14 @@ th {
   background: #1f2937;
   font-weight: 500;
   color: #94a3b8;
+}
+
+tbody tr {
+  background: #2d3748;
+}
+
+tbody tr:hover {
+  background: #374151;
 }
 
 .status {
@@ -719,4 +908,161 @@ th {
 .profile-dropdown {
   margin-left: 1rem;
 }
-</style> 
+
+/* Modal Styles */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.modal-header h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.close-btn:hover {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.modal-body {
+  padding: 1.5rem;
+}
+
+.detail-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.detail-item label {
+  font-weight: 600;
+  color: #374151;
+  font-size: 0.875rem;
+}
+
+.detail-item span {
+  color: #6b7280;
+  font-size: 0.875rem;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-top: 1px solid #e5e7eb;
+  background: #f9fafb;
+  border-radius: 0 0 12px 12px;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn.secondary {
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.btn.secondary:hover {
+  background: #e5e7eb;
+}
+
+.btn.success {
+  background: #10b981;
+  color: white;
+}
+
+.btn.success:hover {
+  background: #059669;
+}
+
+.btn.danger {
+  background: #ef4444;
+  color: white;
+}
+
+.btn.danger:hover {
+  background: #dc2626;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.status-badge.pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.status-badge.approved {
+  background: #d1fae5;
+  color: #065f46;
+}
+
+.status-badge.rejected {
+  background: #fee2e2;
+  color: #991b1b;
+}
+</style>

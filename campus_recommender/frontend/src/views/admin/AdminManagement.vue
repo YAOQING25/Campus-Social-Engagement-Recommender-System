@@ -454,6 +454,14 @@ th {
   color: #94a3b8;
 }
 
+tbody tr {
+  background: #2d3748;
+}
+
+tbody tr:hover {
+  background: #374151;
+}
+
 .role-badge {
   padding: 0.25rem 0.75rem;
   border-radius: 9999px;

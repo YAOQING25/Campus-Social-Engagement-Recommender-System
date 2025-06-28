@@ -245,6 +245,15 @@ const handleRegister = async () => {
   try {
     console.log('Sending registration data:', formData);
 
+    // Clear any existing user data before registration
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
+    localStorage.removeItem('isAdmin')
+    localStorage.removeItem('appliedClubs')
+    localStorage.removeItem('favoritedClubs')
+    localStorage.removeItem('likedClubs')
+    delete axios.defaults.headers.common['Authorization']
+
     // Use the new students registration endpoint
     const response = await axios.post('/api/students/register/', formData);
     console.log('Registration response:', response.data);

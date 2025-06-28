@@ -353,6 +353,14 @@ th {
   color: #94a3b8;
 }
 
+tbody tr {
+  background: #2d3748;
+}
+
+tbody tr:hover {
+  background: #374151;
+}
+
 .actions-th {
   text-align: right;
 }

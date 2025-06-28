@@ -13,13 +13,16 @@ export const useAuthStore = defineStore('auth', {
     async login(username, password, isAdminLogin = true) {
       try {
         console.log('Auth store: login attempt', { username, isAdminLogin });
-        
+
+        // Clear any existing user data before login
+        this.clearUserData()
+
         let response;
         if (isAdminLogin) {
           // Admin login
           response = await axios.post('/api/admins/login/', { username, password });
           this.isAdmin = true;
-          
+
           this.token = response.data.token;
           this.user = response.data.user;
         } else {
@@ -68,19 +71,36 @@ export const useAuthStore = defineStore('auth', {
       } catch (error) {
         console.error('Logout error:', error)
       } finally {
-        localStorage.removeItem('token')
-        localStorage.removeItem('user')
-        localStorage.removeItem('isAdmin')
-        this.token = null
-        this.user = null
-        this.isAdmin = false
-        delete axios.defaults.headers.common['Authorization']
+        this.clearUserData()
         router.push('/login')
       }
     },
 
+    // Clear all user-specific data from localStorage
+    clearUserData() {
+      console.log('Auth store: Clearing all user data')
+      // Clear authentication data
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      localStorage.removeItem('isAdmin')
+
+      // Clear user-specific application data
+      localStorage.removeItem('appliedClubs')
+      localStorage.removeItem('favoritedClubs')
+      localStorage.removeItem('likedClubs')
+
+      // Reset store state
+      this.token = null
+      this.user = null
+      this.isAdmin = false
+      delete axios.defaults.headers.common['Authorization']
+    },
+
     async register(formData) {
       try {
+        // Clear any existing user data before registration
+        this.clearUserData()
+
         // Call student registration endpoint
         const response = await axios.post('/api/students/register/', formData)
         // Save token and user info

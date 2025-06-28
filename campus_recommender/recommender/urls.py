@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views
-from .views import admin_login, student_login, student_register, CategoryListView, CategoryJoinView
+from .views import admin_login, student_login, student_register, CategoryListView, CategoryJoinView, DashboardStatsView
 
 router = DefaultRouter()
 router.register(r'users', views.UserViewSet)
@@ -24,7 +24,10 @@ urlpatterns = [
     path('categories/', views.CategoryListView.as_view(), name='category-list'),
     path('categories/<int:category_id>/', views.CategoryListView.as_view(), name='category-detail'),
     path('categories/<int:category_id>/join/', views.CategoryJoinView.as_view(), name='category-join'),
-    
+
+    # Dashboard statistics endpoint
+    path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
+
     # Custom interaction endpoints
     path('interactions/record-view/', views.InteractionViewSet.as_view({'post': 'record_view'}), name='record-view'),
 

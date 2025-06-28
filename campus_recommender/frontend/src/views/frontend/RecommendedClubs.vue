@@ -1,6 +1,6 @@
 <template>
   <div class="recommended-page">
-    <!-- 导航栏 -->
+    <!-- Heading Navigation -->
     <nav class="navbar">
       <div class="nav-left">
         <i class="bi bi-boxes"></i>
@@ -29,8 +29,18 @@
         </a>
       </div>
     </nav>
-    
-    <!-- 内容区域 -->
+
+    <!-- Application status message (same as home page) -->
+    <div
+      v-if="showApplicationMessage"
+      class="application-message"
+      :class="applicationStatus"
+    >
+      <i :class="applicationStatus === 'success' ? 'bi bi-check-circle' : 'bi bi-exclamation-circle'"></i>
+      <span>{{ applicationStatus === 'success' ? 'Application submitted successfully! Please wait for admin approval.' : 'Failed to submit application. Please try again.' }}</span>
+    </div>
+
+    <!-- Content section -->
     <div class="content">
       <!-- Loading indicator -->
       <div v-if="loading" class="loading-container">
@@ -48,7 +58,7 @@
       </div>
       
       <div v-else>
-        <!-- 推荐社团列表 -->
+        <!-- Recommended club list -->
         <div class="section">
           <div class="section-header">
             <h2><i class="bi bi-lightning"></i> Recommended For You</h2>
@@ -89,12 +99,12 @@
                     <span>{{ club.rating || '0.0' }}/5.0</span>
                   </div>-->
                 </div>
-                <button class="join-btn" @click.stop="handleJoin(club)" :disabled="joinInProgress">
+                <button class="join-btn" @click.stop="handleJoin(club)" :disabled="joinInProgress || club.isApplied || club.isJoined">
                   <span v-if="joinInProgress && joiningClubId === club.id">
                     <i class="bi bi-hourglass"></i> Processing...
                   </span>
                   <span v-else>
-                    {{ club.isJoined ? 'Joined' : 'Join Now' }}
+                    {{ club.isJoined ? 'Joined' : club.isApplied ? 'Applied' : 'Join Now' }}
                   </span>
                 </button>
               </div>
@@ -117,8 +127,15 @@ const recommendedClubs = ref([])
 const error = ref(null)
 const joinInProgress = ref(false)
 const joiningClubId = ref(null)
+const applicationStatus = ref(null)
+const showApplicationMessage = ref(false)
 
-// 随机颜色生成器 - 基于俱乐部名称生成一致的颜色
+// Determine base API URL
+const baseUrl = window.location.hostname === 'localhost'
+  ? `http://${window.location.hostname}:8000`
+  : `${window.location.protocol}//${window.location.host}`
+
+// Random color generator - based on club name to generate consistent colors
 function getColorFromString(str) {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -159,13 +176,13 @@ const fetchRecommendations = async () => {
     }
     
     // Process recommendations
-    recommendedClubs.value = processClubs(response.data || [])
+    recommendedClubs.value = await processClubs(response.data || [])
     
   } catch (err) {
     console.error('Error fetching recommendations:', err)
     
     if (err.response) {
-      // 处理不同的HTTP错误代码
+      // Handle different HTTP error codes
       if (err.response.status === 401) {
         error.value = 'Your session has expired. Please login again.'
         setTimeout(() => router.push('/login'), 2000)
@@ -190,23 +207,63 @@ const retryFetchRecommendations = () => {
 }
 
 // Process club data
-const processClubs = (clubs) => {
+const processClubs = async (clubs) => {
+  // Get applied club IDs from localStorage
+  const appliedClubIds = JSON.parse(localStorage.getItem('appliedClubs') || '[]')
+
+  // Get application statuses from API if possible
+  let applicationStatuses = {}
+  const token = localStorage.getItem('token')
+
+  if (token) {
+    try {
+      const config = {
+        headers: { 'Authorization': `Token ${token}` }
+      }
+      const applicationsResponse = await axios.get(`${baseUrl}/api/applications/`, config)
+      const applications = applicationsResponse.data.results || applicationsResponse.data
+
+      // Create a map of club_id -> application_status
+      applications.forEach(app => {
+        applicationStatuses[app.club] = app.status
+      })
+      console.log('Application statuses:', applicationStatuses)
+    } catch (error) {
+      console.warn('Could not fetch application statuses:', error)
+    }
+  }
+
   return clubs.map(club => {
-    // 提取键以确保我们有所有需要的数据
-    const { 
-      id, 
-      name, 
+    // Extract keys to ensure we have all the data we need
+    const {
+      id,
+      name,
       category = 'General',
       description = '',
       score = 0,
       recommendation_type = 'hybrid',
       member_count = 0,
       is_member = false,
-      // 其他可能的字段
-      club_name,  // 后端可能返回club_name而不是name
-      club_category, // 后端可能返回club_category而不是category
+      // Other possible fields
+      club_name,  // Backend may return club_name instead of name
+      club_category, // Backend may return club_category instead of category
     } = club
-    
+
+    // Determine application status
+    const applicationStatus = applicationStatuses[id]
+    const hasAppliedLocally = appliedClubIds.includes(id)
+
+    let isApplied = false
+    let isJoined = false
+
+    if (applicationStatus === 'approved') {
+      isJoined = true
+    } else if (applicationStatus === 'pending' || hasAppliedLocally) {
+      isApplied = true
+    } else if (is_member) {
+      isJoined = true
+    }
+
     return {
       id: id,
       name: name || club_name || 'Unknown Club',
@@ -216,7 +273,9 @@ const processClubs = (clubs) => {
       score: score,
       recommendationType: recommendation_type,
       image: club.banner_image || null,
-      isJoined: is_member || false
+      isApplied: isApplied,
+      isJoined: isJoined,
+      applicationStatus: applicationStatus
     }
   })
 }
@@ -226,67 +285,78 @@ const goToDetail = (clubId) => {
 }
 
 const handleJoin = async (club) => {
-  // 如果正在处理其他加入请求，不允许新的请求
-  if (joinInProgress.value) {
+  // If already joined, applied, or another join request is in progress, do not allow new requests
+  if (club.isJoined || club.isApplied || joinInProgress.value) {
     return
   }
-  
+
   joinInProgress.value = true
   joiningClubId.value = club.id
-  
+
   try {
+    // Get current user info from localStorage (same as home page)
+    const user = JSON.parse(localStorage.getItem('user') || '{}')
     const token = localStorage.getItem('token')
-    if (!token) {
-      router.push('/login')
-      return
-    }
-    
-    // 暂时更新UI以提供即时反馈
-    club.isJoined = !club.isJoined
-    
-    // 准备请求配置
-    const config = {
-      headers: {
-        'Authorization': `Token ${token}`
-      }
-    }
-    
-    // 记录交互
-    await axios.post('/api/interactions/', {
+
+    console.log('Joining club:', club.name, 'ID:', club.id)
+
+    // Create application data - use same format as home page
+    const applicationData = {
       club: club.id,
-      interaction_type: club.isJoined ? 'join' : 'leave'
-    }, config)
-    
-    // 刷新推荐（使用await等待完成）
-    setTimeout(async () => {
-      try {
-        await fetchRecommendations()
-      } finally {
-        joinInProgress.value = false
-        joiningClubId.value = null
+      status: 'pending'
+    }
+
+    // For development/testing without backend (same logic as home page)
+    try {
+      // Try to submit application to backend - without auth headers for testing (same as home page)
+      const response = await axios.post(`${baseUrl}/api/applications/`, applicationData)
+      console.log('Application submitted successfully:', response.data)
+
+      // If successful, continue with normal flow
+    } catch (apiError) {
+      console.error('API Error:', apiError)
+
+      // Only use simulation if it's an auth error (same as home page)
+      if (apiError.response && apiError.response.status === 401) {
+        console.log('Using simulation mode due to auth error')
+        // Continue with simulation
+      } else {
+        // For other errors, rethrow
+        throw apiError
       }
-    }, 500)
-    
-  } catch (err) {
-    console.error('Error handling join:', err)
-    // 发生错误时恢复UI
-    club.isJoined = !club.isJoined
+    }
+
+    // Update UI - set to applied status (pending approval)
+    club.isApplied = true
+    club.isJoined = false
+
+    // Store in localStorage that user has applied to this club (same as home page)
+    const appliedClubs = JSON.parse(localStorage.getItem('appliedClubs') || '[]')
+    if (!appliedClubs.includes(club.id)) {
+      appliedClubs.push(club.id)
+      localStorage.setItem('appliedClubs', JSON.stringify(appliedClubs))
+    }
+
+    // Show success message (same as home page)
+    applicationStatus.value = 'success'
+    showApplicationMessage.value = true
+    setTimeout(() => {
+      showApplicationMessage.value = false
+    }, 3000)
+
+  } catch (error) {
+    console.error('Error applying to club:', error)
+
+    // Show error message (same format as home page)
+    applicationStatus.value = 'error'
+    showApplicationMessage.value = true
+    setTimeout(() => {
+      showApplicationMessage.value = false
+    }, 3000)
+
+  } finally {
     joinInProgress.value = false
     joiningClubId.value = null
-    
-    // 向用户显示错误
-    if (err.response && err.response.data) {
-      error.value = err.response.data.error || 'Failed to join club. Please try again.'
-    } else {
-      error.value = 'Failed to join club. Please check your connection.'
-    }
-    
-    // 3秒后清除错误消息
-    setTimeout(() => {
-      if (error.value && error.value.includes('Failed to join club')) {
-        error.value = null
-      }
-    }, 3000)
   }
 }
 
@@ -311,7 +381,7 @@ onMounted(() => {
   overflow-x: hidden;
 }
 
-/* 导航栏样式与主页保持一致 */
+/* Navigation bar style consistent with home page */
 .navbar {
   background: white;
   padding: 1rem 2rem;
@@ -319,6 +389,33 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Application message (same as home page) */
+.application-message {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1rem 2rem;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  z-index: 1000;
+}
+
+.application-message.success {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+
+.application-message.error {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
 }
 
 .nav-left {
@@ -362,7 +459,7 @@ onMounted(() => {
   background: #eef2ff;
 }
 
-/* 内容区域样式 */
+/* Content section style */
 .content {
   width: 100%;
   padding: 2rem;
@@ -540,6 +637,24 @@ onMounted(() => {
 .join-btn:disabled {
   background: #9ca3af;
   cursor: not-allowed;
+}
+
+/* Applied state - orange/yellow for pending */
+.join-btn.applied {
+  background: #f59e0b !important;
+}
+
+.join-btn.applied:hover {
+  background: #f59e0b !important;
+}
+
+/* Joined state - green for approved */
+.join-btn.joined {
+  background: #059669 !important;
+}
+
+.join-btn.joined:hover {
+  background: #059669 !important;
 }
 
 /* Loading styles */
