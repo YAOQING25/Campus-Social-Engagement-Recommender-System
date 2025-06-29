@@ -182,6 +182,10 @@ class ModelHandler:
             logger.info(f"ID mappings initialized: {len(self.student_id_mapping)} students, {len(self.club_id_mapping)} clubs")
         except Exception as e:
             logger.error(f"Error initializing ID mappings: {str(e)}", exc_info=True)
+
+    def refresh_id_mappings(self):
+        """Refresh ID mappings to ensure they're current with the database"""
+        self._initialize_id_mappings()
     
     def _print_terminal(self, message):
         """Print to terminal and log the message"""
@@ -652,7 +656,10 @@ class ModelHandler:
         """
         self._print_terminal(f"Hybrid: Getting collaborative filtering recommendations")
         self._print_terminal(f"CF: Starting collaborative filtering for student PK {student.id}, Student ID {student.student_id}")
-        
+
+        # Refresh ID mappings to ensure they're current
+        self.refresh_id_mappings()
+
         try:
             # Get current student’s interactions (as a set for efficient lookup)
             student_interacted_club_ids = set(Interaction.objects.filter(

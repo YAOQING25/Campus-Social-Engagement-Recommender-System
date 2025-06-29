@@ -2,34 +2,37 @@
   <div class="register-container">
     <div class="register-box">
       <h2>CSE</h2>
-      <form @submit.prevent="handleRegister">
+      <form @submit.prevent="handleRegister" autocomplete="off" :key="formKey">
         
         <div class="form-group">
           <label>Name</label>
-          <input 
-            v-model="form.username" 
-            type="text" 
+          <input
+            v-model="form.username"
+            type="text"
             placeholder="Choose a username"
+            autocomplete="off"
             required
           >
         </div>
 
         <div class="form-group">
           <label>Student ID</label>
-          <input 
-            v-model="form.studentId" 
-            type="text" 
+          <input
+            v-model="form.studentId"
+            type="text"
             placeholder="Enter your student ID"
+            autocomplete="off"
             required
           >
         </div>
 
         <div class="form-group">
           <label>E-mail</label>
-          <input 
-            v-model="form.email" 
-            type="text" 
+          <input
+            v-model="form.email"
+            type="email"
             placeholder="Enter your E-mail"
+            autocomplete="off"
             required
           >
         </div>
@@ -177,11 +180,15 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
+import { prepareForNewUser } from '@/utils/sessionCleaner'
 
 const router = useRouter()
+
+// Form key to force re-render when needed
+const formKey = ref(0)
 
 // Define options for checkboxes and dropdowns
 const hobbies = ref(['Sports', 'Technology', 'Arts', 'Science', 'Gaming', 'Music', 'Reading', 'Writing', 'Cooking', 'Travel'])
@@ -207,6 +214,48 @@ const form = reactive({
   activityFrequency: '',
   password: '',
   confirmPassword: ''
+})
+
+// Function to clear form data
+const clearForm = () => {
+  form.username = ''
+  form.studentId = ''
+  form.email = ''
+  form.gender = ''
+  form.course = ''
+  form.hobbies = []
+  form.academicInterests = []
+  form.extracurricularActivities = []
+  form.involvedInClubs = ''
+  form.clubsList = ''
+  form.skills = []
+  form.contentTypes = []
+  form.activityFrequency = ''
+  form.password = ''
+  form.confirmPassword = ''
+
+  // Force form re-render to clear any browser auto-fill
+  formKey.value++
+}
+
+// Clear form and any cached data when component mounts
+onMounted(() => {
+  // Use comprehensive session cleaner
+  prepareForNewUser()
+
+  // Ensure form is completely clean
+  clearForm()
+
+  // Small delay to ensure DOM is ready and then clear again
+  setTimeout(() => {
+    clearForm()
+    console.log('Registration form initialized with clean data')
+  }, 100)
+})
+
+// Clear form when component is unmounted
+onBeforeUnmount(() => {
+  clearForm()
 })
 
 const handleRegister = async () => {
@@ -266,6 +315,10 @@ const handleRegister = async () => {
       full_name: response.data.full_name
     }));
     axios.defaults.headers.common['Authorization'] = `Token ${response.data.token}`;
+
+    // Clear form data after successful registration
+    clearForm()
+
     // Redirect to home
     router.push('/home');
   } catch (error) {

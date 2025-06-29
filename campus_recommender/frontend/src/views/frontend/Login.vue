@@ -2,22 +2,24 @@
   <div class="login-container">
     <div class="login-content">
       <h2 class="title">CSE</h2>
-      <form @submit.prevent="handleLogin" class="login-form">
+      <form @submit.prevent="handleLogin" class="login-form" autocomplete="off">
         <div class="form-group">
           <label>Student ID</label>
-          <input 
-            v-model="studentId" 
-            type="text" 
+          <input
+            v-model="studentId"
+            type="text"
             placeholder="Enter your student ID"
+            autocomplete="off"
             required
           >
         </div>
         <div class="form-group">
           <label>Password</label>
-          <input 
-            v-model="password" 
-            type="password" 
+          <input
+            v-model="password"
+            type="password"
             placeholder="Enter your password"
+            autocomplete="off"
             required
           >
         </div>
@@ -34,9 +36,10 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { prepareForLogin } from '@/utils/sessionCleaner'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -44,6 +47,12 @@ const studentId = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
+
+// Clear any existing session data when login page loads
+onMounted(() => {
+  prepareForLogin()
+  console.log('Login form initialized with clean session')
+})
 
 const handleLogin = async () => {
   error.value = ''

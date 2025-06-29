@@ -353,14 +353,22 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 
 class RecommenderViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
-    model_handler = ModelHandler()
+    _model_handler = None
+
+    @classmethod
+    def get_model_handler(cls):
+        """Get a shared ModelHandler instance, creating it if needed"""
+        if cls._model_handler is None:
+            cls._model_handler = ModelHandler()
+        return cls._model_handler
 
     @action(detail=False, methods=['get'])
     def recommend(self, request):
         student = get_object_or_404(Student, user=request.user)
         n_recommendations = int(request.query_params.get('n', 5))
-        
-        recommendations = self.model_handler.get_hybrid_recommendations(
+
+        model_handler = self.get_model_handler()
+        recommendations = model_handler.get_hybrid_recommendations(
             student, top_n=n_recommendations
         )
         
@@ -381,8 +389,9 @@ class RecommenderViewSet(viewsets.ViewSet):
     def content_based(self, request):
         student = get_object_or_404(Student, user=request.user)
         n_recommendations = int(request.query_params.get('n', 5))
-        
-        recommendations = self.model_handler.get_content_based_recommendations(
+
+        model_handler = self.get_model_handler()
+        recommendations = model_handler.get_content_based_recommendations(
             student, top_n=n_recommendations
         )
         
@@ -403,8 +412,9 @@ class RecommenderViewSet(viewsets.ViewSet):
     def collaborative(self, request):
         student = get_object_or_404(Student, user=request.user)
         n_recommendations = int(request.query_params.get('n', 5))
-        
-        recommendations = self.model_handler.get_collaborative_recommendations(
+
+        model_handler = self.get_model_handler()
+        recommendations = model_handler.get_collaborative_recommendations(
             student, top_n=n_recommendations
         )
         
